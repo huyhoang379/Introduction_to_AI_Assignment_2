@@ -16,13 +16,16 @@ class Node:
     def is_fully_expanded(self):
         return len(self.children) == len(self.state.get_valid_moves)
 
-    def uct_value(self, exploration_weight=1.41):
-        if self.visits == 0:
-            return float('inf')
-        return (self.value / self.visits) + exploration_weight * np.sqrt(np.log(self.parent.visits) / self.visits)
-
     def best_child(self, exploration_weight=1.41):
-        return max(self.children, key=lambda child: child.uct_value(exploration_weight))
+        if not self.children:
+            return None
+        choices_weights = [
+            (child.value / child.visits) + exploration_weight * np.sqrt(
+                np.log(self.visits) / child.visits
+            )
+            for child in self.children
+        ]
+        return self.children[np.argmax(choices_weights)]
 
     def expand(self):
         untried_moves = [
@@ -38,92 +41,109 @@ class Node:
             return child_node
         return None
 
+
+def minimax(state, depth, alpha, beta, maximizing_player):
+    if depth == 0 or state.game_over:
+        return evaluate_state(state)
+
+    if maximizing_player:
+        max_eval = -float('inf')
+        for move in state.get_valid_moves:
+            next_state = copy.deepcopy(state)
+            next_state.act_move(move)
+            eval = minimax(next_state, depth - 1, alpha, beta, False)
+            max_eval = max(max_eval, eval)
+            alpha = max(alpha, eval)
+            if beta <= alpha:
+                break
+        return max_eval
+    else:
+        min_eval = float('inf')
+        for move in state.get_valid_moves:
+            next_state = copy.deepcopy(state)
+            next_state.act_move(move)
+            eval = minimax(next_state, depth - 1, alpha, beta, True)
+            min_eval = min(min_eval, eval)
+            beta = min(beta, eval)
+            if beta <= alpha:
+                break
+        return min_eval
+
+
 def evaluate_state(state):
     """
-    Advanced state evaluation function:
-    - Counts controlled cells.
-    - Evaluates potential win lines and threats.
-    - Prioritizes strategic positions.
+    Heuristic to evaluate game state:
+    - Positive for advantage to current player
+    - Negative for advantage to opponent
+    - Zero for neutral states
     """
-    score = 0
-    player = state.player_to_move
+    result = state.game_result(state.global_cells.reshape(3, 3))
+    if result == 1:  # Current player wins
+        return 100
+    elif result == -1:  # Opponent wins
+        return -100
+    else:
+        return 0
 
-    # Controlled cells
-    score += sum(1 for cell in state.global_cells if cell == player)
-    score -= sum(1 for cell in state.global_cells if cell == -player)
-
-    # Strategic positions (corners, center, edges)
-    strategic_positions = [0, 2, 4, 6, 8]  # Indices of corners and center
-    score += sum(2 for idx in strategic_positions if state.global_cells[idx] == player)
-    score -= sum(2 for idx in strategic_positions if state.global_cells[idx] == -player)
-
-    # Evaluate potential lines
-    for line in state.global_cells.reshape(3, 3):
-        player_count = sum(1 for cell in line if cell == player)
-        opponent_count = sum(1 for cell in line if cell == -player)
-        if player_count > 0 and opponent_count == 0:
-            score += player_count ** 2
-        elif opponent_count > 0 and player_count == 0:
-            score -= opponent_count ** 2
-
-    return score
 
 def rollout(state):
+    """
+    Improved rollout using Minimax with Alpha-Beta pruning for deeper evaluation.
+    """
+    max_depth = 3  # Depth for Minimax during rollout
     while not state.game_over:
         valid_moves = state.get_valid_moves
         if not valid_moves:
             break
-
-        # Prioritize winning moves
-        for move in valid_moves:
-            temp_state = copy.deepcopy(state)
-            temp_state.act_move(move)
-            if temp_state.game_result(temp_state.global_cells.reshape(3, 3)) == state.player_to_move:
-                state.act_move(move)
-                return state.player_to_move
-
-        # Fallback: Use evaluation-based move prioritization
-        move_scores = [(move, evaluate_state(copy.deepcopy(state))) for move in valid_moves]
-        move = max(move_scores, key=lambda x: x[1])[0]
+        move = max(valid_moves, key=lambda m: minimax(state, max_depth, -float('inf'), float('inf'), True))
         state.act_move(move)
 
     result = state.game_result(state.global_cells.reshape(3, 3))
-    return 0 if result is None else result
+    return result if result is not None else 0
+
 
 def backpropagate(node, result):
     while node:
         node.visits += 1
-        if result == 0:
-            node.value += evaluate_state(node.state)
-        else:
-            node.value += result if node.state.player_to_move == -1 else -result
+        # If the current node belongs to the opponent, reverse the result
+        node.value += result if node.state.player_to_move == -1 else -result
         node = node.parent
+
 
 def mcts_search(state, itermax, time_limit):
     root = Node(state)
     start_time = time.time()
 
-    def simulate():
-        node = root
-        while node.is_fully_expanded() and node.children:
-            node = node.best_child()
+    with ThreadPoolExecutor() as executor:
+        while time.time() - start_time < time_limit:
+            # Perform parallel rollouts
+            futures = []
+            for _ in range(itermax):
+                futures.append(executor.submit(single_iteration, root))
 
-        if not node.is_fully_expanded() and not node.state.game_over:
-            node = node.expand()
-
-        simulation_result = rollout(copy.deepcopy(node.state))
-        backpropagate(node, simulation_result)
-
-    with ThreadPoolExecutor(max_workers=4) as executor:  # Use 4 threads for parallel simulations
-        futures = [executor.submit(simulate) for _ in range(itermax)]
-        for future in futures:
-            if time.time() - start_time > time_limit:
-                break
-            future.result()
+            for future in futures:
+                node, simulation_result = future.result()
+                backpropagate(node, simulation_result)
 
     return root.best_child(0).move
 
+
+def single_iteration(root):
+    """
+    Single iteration of MCTS: selection, expansion, simulation, backpropagation.
+    """
+    node = root
+    while node.is_fully_expanded() and node.children:
+        node = node.best_child()
+
+    if not node.is_fully_expanded() and not node.state.game_over:
+        node = node.expand()
+
+    simulation_result = rollout(copy.deepcopy(node.state))
+    return node, simulation_result
+
+
 def select_move(cur_state, remain_time):
-    time_limit = min(remain_time, 10)
-    itermax = int(5000 * time_limit)  # Dynamic iteration scaling
+    time_limit = min(remain_time, 10)  # Ensure we stay within the 10-second limit
+    itermax = 100  # Adjust iterations based on performance tests
     return mcts_search(cur_state, itermax, time_limit)
