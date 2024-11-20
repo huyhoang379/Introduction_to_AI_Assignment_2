@@ -17,6 +17,19 @@ class Node:
         return len(self.children) == len(self.state.get_valid_moves)
 
     def best_child(self, exploration_weight=1.41):
+        if not self.children:
+            # Nếu không có nút con, trả về một nút con ngẫu nhiên từ danh sách các nước đi hợp lệ
+            valid_moves = self.state.get_valid_moves()
+            if valid_moves:
+                move = random.choice(valid_moves)
+                next_state = copy.deepcopy(self.state)
+                next_state.act_move(move)
+                child_node = Node(state=next_state, parent=self, move=move)
+                self.children.append(child_node)
+                return child_node
+            else:
+                # Nếu không có nước đi hợp lệ, trả về None hoặc xử lý theo cách khác
+                return None
         choices_weights = [
             (child.value / child.visits) + exploration_weight * np.sqrt(
                 np.log(self.visits) / child.visits
