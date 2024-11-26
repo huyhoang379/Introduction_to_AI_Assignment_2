@@ -82,7 +82,7 @@ def simulate(node):
 def mcts_search(state, itermax, time_limit):
     root = Node(state)
     start_time = time.time()
-    max_workers = 6  # Adjust based on available threads or system capacity
+    max_workers = 4  # Adjust based on available threads or system capacity
     # max_workers = os.cpu_count()
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -110,6 +110,11 @@ def mcts_search(state, itermax, time_limit):
                     result = future.result()
                     backpropagate(node, result)
 
+    if not root.children:
+        valid_moves = root.state.get_valid_moves
+        if not valid_moves:
+            return None
+            
     return root.best_child(0).move
 
 
