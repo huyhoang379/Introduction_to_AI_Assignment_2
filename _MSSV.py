@@ -1,7 +1,7 @@
 import random
 import time
 import copy
-# import os
+import os
 import numpy as np
 from concurrent.futures import ThreadPoolExecutor
 
@@ -82,8 +82,8 @@ def simulate(node):
 def mcts_search(state, itermax, time_limit):
     root = Node(state)
     start_time = time.time()
-    max_workers = 4  # Adjust based on available threads or system capacity
-    # max_workers = os.cpu_count()
+    # max_workers = 6  # Adjust based on available threads or system capacity
+    max_workers = os.cpu_count()
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         for _ in range(itermax):
