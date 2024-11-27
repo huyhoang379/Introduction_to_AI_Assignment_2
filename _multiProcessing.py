@@ -118,7 +118,59 @@ def mcts_search(state, itermax, time_limit):
     return root.best_child(0).move
 
 
+def check_block_win(state, move):
+    """
+    Check if making a move will win the block.
+    """
+    temp_state = copy.deepcopy(state)
+    temp_state.act_move(move)
+    local_board = temp_state.blocks[move.index_local_board]
+    return temp_state.game_result(local_board) == move.value
+
+
+def check_block_threat(state, move):
+    """
+    Check if making a move will prevent the opponent from winning the block.
+    """
+    temp_state = copy.deepcopy(state)
+    opponent_move = UltimateTTT_Move(move.index_local_board, move.x, move.y, -move.value)
+    temp_state.act_move(opponent_move)
+    local_board = temp_state.blocks[move.index_local_board]
+    return temp_state.game_result(local_board) == -move.value
+
+
 def select_move(cur_state, remain_time):
-    time_limit = min(remain_time, 10)  # Ensure we stay within the 10-second limit
-    itermax = 100  # Adjust iterations based on performance tests
-    return mcts_search(cur_state, itermax, time_limit)
+    start_time = time.time()  # Bắt đầu đo thời gian
+    time_limit = min(remain_time, 10)  # Đảm bảo không vượt quá giới hạn 10 giây
+    itermax = 100  # Điều chỉnh số lần lặp dựa trên hiệu năng
+    
+    # Lấy danh sách các nước đi hợp lệ
+    valid_moves = cur_state.get_valid_moves
+
+    # Multi-threading cho check_block_win
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        winning_moves = list(executor.map(lambda move: move if check_block_win(cur_state, move) else None, valid_moves))
+    winning_moves = [move for move in winning_moves if move]  # Lọc các nước đi hợp lệ
+
+    if winning_moves:  # Ưu tiên các nước đi thắng block
+        return random.choice(winning_moves)
+
+    # Multi-threading cho check_block_threat
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        threat_moves = list(executor.map(lambda move: move if check_block_threat(cur_state, move) else None, valid_moves))
+    threat_moves = [move for move in threat_moves if move]  # Lọc các nước đi hợp lệ
+
+    if threat_moves:  # Ưu tiên các nước đi chặn đối thủ
+        return random.choice(threat_moves)  
+
+    # Tính thời gian còn lại
+    elapsed_time = time.time() - start_time
+    remaining_time_for_mcts = time_limit - elapsed_time
+
+    # Nếu không còn thời gian, trả về nước đi ngẫu nhiên
+    if remaining_time_for_mcts <= 0:
+        return random.choice(valid_moves)
+
+    # Bước 3: Chạy MCTS với thời gian còn lại
+    return mcts_search(cur_state, itermax, remaining_time_for_mcts)
+
