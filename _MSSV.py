@@ -121,5 +121,5 @@ def mcts_search(state, itermax, time_limit):
 def select_move(cur_state, remain_time):
     time_limit = min(remain_time, 10)
     itermax = 100
-    return mcts_search(cur_state, itermax, remaining_time_for_mcts)
+    return mcts_search(cur_state, itermax, time_limit)
 
